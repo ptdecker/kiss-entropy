@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  test:
+    name: Test on ${{ matrix.rust }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # stable + MSRV (adjust to your real MSRV)
+        rust: ["stable", "1.85.0"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Cache cargo builds
+        uses: swatinem/rust-cache@v2
+
+      - name: rustfmt (format check)
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (lints)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Tests
+        run: cargo test --all-features --all-targets --verbose
+
+      - name: Docs build
+        run: cargo doc --all-features --no-deps
+
