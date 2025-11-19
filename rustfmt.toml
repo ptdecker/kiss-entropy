@@ -5,10 +5,15 @@ max_width = 100
 use_small_heuristics = "Max"
 newline_style = "Unix"
 reorder_imports = true
-group_imports = "StdExternalCrate"
 tab_spaces = 4
 hard_tabs = false
 match_arm_leading_pipes = "Always"
-wrap_comments = true
-format_code_in_doc_comments = true
-normalize_doc_attributes = true
+
+# TODO: The following are nightly-only on rustfmt and must not be set on stable. If we enable
+#  nighly-only in our toolchain, we will enable these.
+#  [Issue #1](https://github.com/ptdecker/urandom-kiss/issues/1)
+#
+# wrap_comments = true
+# format_code_in_doc_comments = true
+# normalize_doc_attributes = true
+# group_imports = "StdExternalCrate"
