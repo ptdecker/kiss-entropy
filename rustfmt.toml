@@ -11,7 +11,7 @@ match_arm_leading_pipes = "Always"
 
 # TODO: The following are nightly-only on rustfmt and must not be set on stable. If we enable
 #  nightly-only in our toolchain, we will enable these.
-#  [Issue #1](https://github.com/ptdecker/urandom-kiss/issues/1)
+#  [Issue #1](https://github.com/ptdecker/kiss-entropy/issues/1)
 #
 # wrap_comments = true
 # format_code_in_doc_comments = true
