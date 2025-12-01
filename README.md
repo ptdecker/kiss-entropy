@@ -1,4 +1,4 @@
-# urandom-kiss
+# kiss-entropy
 
 A zero-dependency Rust wrapper for Linux and macOS /dev/urandom, exposing raw entropy reads, FIPS
 mode detection, and kernel RNG environment queries. Designed for simplicity, portability, and
@@ -6,15 +6,17 @@ no_std-compatible builds.
 
 ## Badges
 
-[![crates.io](https://img.shields.io/crates/v/urandom-kiss.svg)](https://crates.io/crates/urandom-kiss)  
-[![docs.rs](https://img.shields.io/docsrs/urandom-kiss)](https://docs.rs/urandom-kiss)  
-[![CI](https://github.com/ptdecker/urandom-kiss/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/ptdecker/urandom-kiss/actions/workflows/rust.yml)
+[![crates.io](https://img.shields.io/crates/v/kiss-entropy.svg)](https://crates.
+io/crates/kiss-entropy)  
+[![docs.rs](https://img.shields.io/docsrs/kiss-entropy)](https://docs.rs/kiss-entropy)  
+[![CI](https://github.com/ptdecker/kiss-entropy/actions/workflows/rust.yml/badge.svg?branch=main)]
+(https://github.com/ptdecker/kiss-entropy/actions/workflows/rust.yml)
 
 ---
 
 ## Overview
 
-`urandom-kiss` provides a tiny, no_std-friendly interface for reading secure random bytes directly
+`kiss-entropy` provides a tiny, no_std-friendly interface for reading secure random bytes directly
 from `/dev/urandom` and related system sources on Unix-like systems. It is designed for developers
 who want a predictable, minimal abstraction without pulling in a full RNG framework or any
 third-party dependencies.
@@ -34,13 +36,13 @@ randomness facilities without involving `rand`, `getrandom`, or higher-level lib
 
 ```toml
 [dependencies]
-urandom-kiss = "0.1"
+kiss-entropy = "0.1"
 ```
 
 ### Minimal Example
 
 ```rust
-use urandom_kiss::read_urandom;
+use kiss_entropy::read_urandom;
 
 fn main() {
     let mut buf = [0u8; 32];
@@ -53,7 +55,7 @@ fn main() {
 If you enable optional features, you can also check FIPS mode or probe the RNG type:
 
 ```rust
-use urandom_kiss::{is_fips_mode, detect_rng_type};
+use kiss_entropy::{is_fips_mode, detect_rng_type};
 
 fn main() {
     println!("FIPS enabled: {}", is_fips_mode());
@@ -77,7 +79,7 @@ fn main() {
 - **Tested on:**
     - Linux (x86_64, aarch64)
     - macOS (x86_64, aarch64/ARM64)
-    - BSD variants are expected to work, but not yet CI-tested
+    - BSD variants are expected to work but not yet CI-tested
 - Windows is **not supported**, as `/dev/urandom` does not exist there.
 
 ---

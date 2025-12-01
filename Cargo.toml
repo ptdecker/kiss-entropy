@@ -1,13 +1,13 @@
 [package]
-name = "urandom-kiss"
+name = "kiss-entropy"
 version = "0.1.0"
 edition = "2024"
 
 description = "A zero-dependency Rust wrapper for Linux and macOS /dev/urandom, exposing raw entropy reads, FIPS mode detection, and kernel RNG environment queries."
 license = "LICENSE-MIT"
-repository = "https://github.com/ptdecker/urandom-kiss"
-homepage = "https://github.com/ptdecker/urandom-kiss"
-documentation = "https://docs.rs/urandom-kiss"
+repository = "https://github.com/ptdecker/kiss-entropy"
+homepage = "https://github.com/ptdecker/kiss-entropy"
+documentation = "https://docs.rs/kiss-entropy"
 readme = "README.md"
 keywords = ["urandom", "rng", "no_std", "linux", "entropy"]
 categories = ["os::unix-apis", "api-bindings", "no-std"]
