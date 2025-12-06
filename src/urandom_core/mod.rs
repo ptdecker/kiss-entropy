@@ -17,11 +17,13 @@ const O_RDONLY: c_int = 0;
 /// File descriptor flag for close-on-exec behavior
 ///
 /// # Platform Notes
-/// - Both Linux and macOS define `O_CLOEXEC`, but value differs on some platforms. When expanding
-///   this module to support other targets, consider avoiding `O_CLOEXEC` entirely for maximum
-///   portability.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const O_CLOEXEC: c_int = 0x80000;
+/// - Both Linux and macOS define `O_CLOEXEC`, but value differs. When expanding this module to
+///   support other targets, consider avoiding `O_CLOEXEC` entirely for maximum portability. Or,
+///   continue implementing platform specific values
+#[cfg(target_os = "linux")]
+const O_CLOEXEC: c_int = 0x0008_0000;
+#[cfg(target_os = "macos")]
+const O_CLOEXEC: c_int = 0x0100_0000;
 
 /// Path to the system's random device
 ///
