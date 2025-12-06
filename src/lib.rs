@@ -23,7 +23,7 @@ use urandom_core::fill_from_urandom;
 /// # Ok::<(), Error>(())
 /// ```
 /// # Errors
-/// Returns `UrandomError` if:
+/// Returns `Error` if:
 /// - Failed to open /dev/urandom
 /// - Failed to read from file descriptor
 /// - Got incomplete read from /dev/urandom
