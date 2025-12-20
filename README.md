@@ -39,7 +39,7 @@ kiss-entropy = "0.1"
 
 ### Minimal Example
 
-See [simple_fill](examples/simple_fill.rs) for a simple example of using the library to fill a
+See [simple_fill.rs](examples/simple_fill.rs) for a simple example of using the library to fill a
 buffer with random bytes.
 
 ```shell
