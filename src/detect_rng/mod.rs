@@ -295,6 +295,29 @@ mod macos_rng {
 mod linux_hwrng {
     use super::{DetectError, RngType};
 
+    /// Errors that may occur during RNG detection.
+    ///
+    /// This module is intended to be `no_std`, so we keep the error surface small and allocation-free.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum DetectError {
+        /// OS call failed (platform-specific errno is provided when available).
+        OsError(i32),
+        /// Unexpected / malformed data (e.g., sysfs/sysctl content not in the expected format).
+        ParseError,
+    }
+
+    impl core::fmt::Display for DetectError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                DetectError::OsError(e) => write!(f, "OS error (errno={e})"),
+                DetectError::ParseError => write!(f, "parse error"),
+            }
+        }
+    }
+
+    /// Convenience alias used throughout this module.
+    pub type Result<T> = core::result::Result<T, DetectError>;
+
     // Paths used by the Linux hwrng framework:
     // - /sys/devices/virtual/misc/hw_random/rng_current
     // - /sys/devices/virtual/misc/hw_random/rng_available
