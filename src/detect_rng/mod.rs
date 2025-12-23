@@ -1,69 +1,135 @@
+//! Best-effort identification of hardware-backed RNG mechanisms available to the current program.
+//!
+//! # What this module does
+//!
+//! This module attempts to detect the presence of *hardware-backed* random-number mechanisms and
+//! classify them into a small set of known types (`RngType`). The detection is intentionally
+//! best-effort and conservative: it reports what the current platform makes observable without
+//! relying on allocation or `std`.
+//!
+//! # What this module does *not* do
+//!
+//! - It **does not prove** that the operating system RNG (e.g., `/dev/urandom`) has been seeded
+//!   from any particular hardware source.
+//! - It **does not measure entropy contribution** or verify that a kernel RNG is “fully seeded”.
+//! - On some systems (notably macOS) the OS intentionally abstracts entropy sources; in such cases
+//!   only coarse classifications are possible.
+//!
+//! # Platform behavior overview
+//!
+//! The implementation is selected at compile time via `cfg(...)`:
+//!
+//! - **`x86/x86_64` (all OSes):** CPU feature detection via `CPUID` is used to detect `RDSEED` and
+//!   `RDRAND`.
+//! - **macOS:** additional probing via `sysctlbyname` is used where applicable. If a specific
+//!   mechanism cannot be identified, the function returns a macOS kernel RNG fallback
+//!   (`RngType::MacosKernelCprng`) to indicate “hardware-backed but not attributable”.
+//! - **Linux `x86_64`:** the Linux hwrng framework is probed via sysfs to detect drivers such as
+//!   `virtio-rng` and TPM-based RNGs.
+//!
+//! # Const vs non-const API shape
+//!
+//! On **non-macOS** targets, `detect_rng()` is a `const fn`. This allows you to use it in
+//! compile-time contexts when the detection path is purely CPU-feature based (e.g., `CPUID`) and/or
+//! otherwise does not require OS calls.
+//!
+//! On **macOS**, `detect_rng()` is a regular `fn` because macOS detection may call into the OS
+//! (`sysctlbyname`), which cannot be evaluated in a `const` context. A separate `cfg`-gated
+//! definition is provided so callers can use `detect_rng()` uniformly on all targets.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use kiss_entropy::detect_rng;
+//! let detected = detect_rng();
+//! if let Some(kind) = detected {
+//!     // e.g. "CPU hardware entropy generator (Intel/AMD RDSEED)" or "macOS kernel random number
+//!     // generator (hardware-backed, source not exposed)"
+//!     println!("{kind}");
+//! }
+//! ```
+
 use super::fmt;
+
 use core::fmt::Display;
 
 /// Detected hardware RNG source/type (best-effort).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum RngType {
-    /// Hardware RNG seems present, but specific type is unknown.
+    /// A hardware-backed RNG appears to be available, but the specific source cannot be identified.
+    ///
+    /// This is a best-effort classification used when the platform indicates “some hardware source
+    /// exists” but does not provide a reliable way to name it.
     Unknown,
-    /// `x86/x86_64` CPU instruction-based RNG.
+    /// CPU instruction-based random number generator (`RDRAND`) on Intel/AMD `x86/x86_64` CPUs.
+    ///
+    /// `RDRAND` produces random values from an on-CPU generator. It is typically suitable as a
+    /// *random-number* source, but may not be the best choice when the caller specifically wants
+    /// raw entropy.
     X86Rdrand,
-    /// `x86/x86_64` CPU instruction-based entropy seed generator.
+    /// CPU instruction-based entropy seed generator (`RDSEED`) on Intel/AMD `x86/x86_64` CPUs.
+    ///
+    /// `RDSEED` is intended to provide seed material or entropy suitable for seeding a software
+    /// DRAG.
     X86Rdseed,
-    /// `aarch64` random-number instructions (ARM `FEAT_RNG` / RNDR).
+    /// ARMv8.5-A `FEAT_RNG` (`RNDR`/`RNDRRS`) support on aarch64.
+    ///
+    /// If this is reported, the CPU provides random-number instructions. Many Apple Silicon
+    /// generations (e.g., M1/M2) do **not** implement `FEAT_RNG`; on those machines this variant
+    /// will typically not be returned.
     Aarch64FeatRng,
-    /// MacOS on Apple Silicon
+    /// macOS kernel random number generator (hardware-backed, but source attribution is not exposed).
+    ///
+    /// macOS provides a kernel RNG that is designed to be hardware-backed. However, macOS generally
+    /// does not expose which hardware source(s) contribute entropy, so precise attribution is not
+    /// possible using public interfaces.
+    ///
+    /// This variant is used as a **macOS fallback** (both Intel and Apple Silicon) when a more
+    /// specific mechanism (e.g., `RDRAND`, `RDSEED`, or `FEAT_RNG`) cannot be identified.
     MacosKernelCprng,
-    /// Linux hwrng framework reports a current RNG driver, but it was not mapped
-    /// to a specific variant in this enum.
+    /// Linux hwrng framework reports a current RNG driver, but it was not mapped to a specific
+    /// variant in this enum.
     LinuxHwrngCurrentDriver,
-    /// Linux hwrng framework indicates virtio-rng.
+    /// Linux hwrng framework indicates a virtio-rng device (commonly used in virtual machines).
     VirtioRng,
-    /// Linux hwrng framework indicates TPM RNG.
+    /// Linux hwrng framework indicates a TPM-backed RNG.
     TpmRng,
 }
 
 impl Display for RngType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unknown =>
-                write!(f, "hardware random number source present, but type is unknown"),
-
-            Self::X86Rdrand =>
-                write!(f, "CPU hardware random number generator (Intel/AMD RDRAND)"),
-
-            Self::X86Rdseed =>
-                write!(f, "CPU hardware entropy generator (Intel/AMD RDSEED)"),
-
-            Self::Aarch64FeatRng =>
-                write!(f, "ARM CPU hardware random number generator (RNDR instruction)"),
-
-            Self::MacosKernelCprng =>
-                write!(f, "macOS kernel random number generator (hardware-backed, source not exposed)"),
-
-            Self::LinuxHwrngCurrentDriver =>
-                write!(f, "Linux kernel hardware random number driver"),
-
-            Self::VirtioRng =>
-                write!(f, "virtual machine hardware random number device (virtio-rng)"),
-
-            Self::TpmRng =>
-                write!(f, "trusted platform module (TPM) hardware random number generator"),
+            | Self::Unknown => {
+                write!(f, "hardware random number source present, but type is unknown")
+            }
+            | Self::X86Rdrand => {
+                write!(f, "CPU hardware random number generator (Intel/AMD RDRAND)")
+            }
+            | Self::X86Rdseed => write!(f, "CPU hardware entropy generator (Intel/AMD RDSEED)"),
+            | Self::Aarch64FeatRng => {
+                write!(f, "ARM CPU hardware random number generator (RNDR instruction)")
+            }
+            | Self::MacosKernelCprng => write!(
+                f,
+                "macOS kernel random number generator (hardware-backed, source not exposed)"
+            ),
+            | Self::LinuxHwrngCurrentDriver => {
+                write!(f, "Linux kernel hardware random number driver")
+            }
+            | Self::VirtioRng => {
+                write!(f, "virtual machine hardware random number device (virtio-rng)")
+            }
+            | Self::TpmRng => {
+                write!(f, "trusted platform module (TPM) hardware random number generator")
+            }
         }
     }
 }
 
-/// Best-effort detection of whether a *hardware* RNG source is available and, if so, what kind.
+/// Detect a hardware-backed RNG mechanism and classify it.
 ///
-/// Notes / limitations:
-/// - You can generally detect **presence** of certain hardware RNG mechanisms (e.g., x86 RDRAND/RDSEED,
-///   Linux hwrng drivers), but you usually cannot prove whether the kernel RNG was seeded from them.
-/// - OS-specific checks are gated by `cfg(...)` and may be unavailable on some targets.
-///
-/// Priority (current implementation):
-/// 1) CPU instruction capabilities (`x86/x86_64`: RDSEED, then RDRAND)
-/// 2) Linux hwrng sysfs current driver (on `x86_64` Linux only, syscall-based, `no_std`)
-/// 3) Otherwise: `RngType::None`
+/// Returns `Some(RngType)` when a hardware-backed RNG mechanism is detected, or `None` when no
+/// hardware-backed mechanism can be identified.
 #[cfg(not(target_os = "macos"))]
 #[must_use]
 pub const fn detect_rng() -> Option<RngType> {
@@ -113,7 +179,7 @@ pub fn detect_rng() -> Option<RngType> {
         }
     }
 
-    // 2) macOS sysctl probes
+    // 2) macOS `sysctl` probes
     if let Some(t) = macos_rng::detect_via_sysctl() {
         return Some(t);
     }
@@ -157,8 +223,7 @@ mod macos_rng {
     use core::ffi::{c_char, c_int, c_void};
 
     // sysctlbyname signature (from <sys/sysctl.h>):
-    // int sysctlbyname(const char *name, void *oldp, size_t *oldlenp,
-    //                  void *newp, size_t newlen);
+    // int sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
     unsafe extern "C" {
         fn sysctlbyname(
             name: *const c_char,
@@ -173,14 +238,14 @@ mod macos_rng {
     const HW_OPTIONAL_RDRAND: &[u8] = b"hw.optional.rdrand\0";
     const HW_OPTIONAL_RDSEED: &[u8] = b"hw.optional.rdseed\0";
 
-    // Apple Silicon probe for ARM FEAT_RNG (RNDR).
-    // This key is used by widely-deployed CPU feature detectors on darwin/arm64.
+    // Apple Silicon probe for ARM FEAT_RNG (RNDR). This key is used by widely-deployed CPU feature
+    // detectors on darwin/arm64.
     const HW_OPTIONAL_ARM_FEAT_RNG: &[u8] = b"hw.optional.arm.FEAT_RNG\0";
 
     #[inline]
     pub fn detect_via_sysctl() -> Option<RngType> {
-        // On Intel Macs, these sysctls typically exist.
-        // Prefer RDSEED over RDRAND when both are present.
+        // On Intel Macs, these sysctls typically exist. Prefer `RDSEED` over `RDRAND` when both are
+        // present.
         if sysctl_u32_eq_1(HW_OPTIONAL_RDSEED) {
             return Some(RngType::X86Rdseed);
         }
@@ -188,7 +253,7 @@ mod macos_rng {
             return Some(RngType::X86Rdrand);
         }
 
-        // On Apple Silicon, detect ARM FEAT_RNG (RNDR instructions).
+        // On Apple Silicon, detect ARM `FEAT_RNG` (`RNDR` instructions).
         if sysctl_u32_eq_1(HW_OPTIONAL_ARM_FEAT_RNG) {
             return Some(RngType::Aarch64FeatRng);
         }
@@ -233,8 +298,8 @@ mod linux_hwrng {
     // Paths used by the Linux hwrng framework:
     // - /sys/devices/virtual/misc/hw_random/rng_current
     // - /sys/devices/virtual/misc/hw_random/rng_available
-    //
     // We prefer rng_current because it indicates the driver currently selected.
+
     const RNG_CURRENT: &[u8] = b"/sys/devices/virtual/misc/hw_random/rng_current\0";
     const RNG_AVAILABLE: &[u8] = b"/sys/devices/virtual/misc/hw_random/rng_available\0";
 
