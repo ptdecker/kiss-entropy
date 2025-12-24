@@ -128,10 +128,10 @@ impl Display for RngType {
 ///
 /// Returns `Some(RngType)` when a hardware-backed RNG mechanism is detected, or `None` when no
 /// hardware-backed mechanism can be identified.
-#[cfg(all(target_os = "linux", any(target_arch = "x86", target_arch = "x86_64")))]
+/// - CPU instruction-based detection (works without OS access).
+#[cfg(all(target_os = "linux", target_arch = "x86"))]
 #[must_use]
 pub fn detect_rng() -> Option<RngType> {
-    // 1) CPU instruction-based detection (works without OS access).
     if x86_cpuid::has_rdseed() {
         return Some(RngType::X86Rdseed);
     }
@@ -141,12 +141,12 @@ pub fn detect_rng() -> Option<RngType> {
     None;
 }
 
+/// Linux sysfs hwrng detection (OS-specific).
+/// Implemented only for x86_64 Linux here, using raw syscalls (no libc, no std).
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[must_use]
 pub fn detect_rng() -> Option<RngType> {
-    // 2) Linux sysfs hwrng detection (OS-specific).
-    // Implemented only for x86_64 Linux here, using raw syscalls (no libc, no std).
-    return linux_hwrng::detect_from_sysfs();
+    return Some(linux_hwrng::detect_from_sysfs());
 }
 
 #[cfg(target_os = "macos")]
