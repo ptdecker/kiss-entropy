@@ -140,20 +140,13 @@ pub fn detect_rng() -> Option<RngType> {
         if x86_cpuid::has_rdrand() {
             return Some(RngType::X86Rdrand);
         }
+        return None;
     }
 
     // 2) Linux sysfs hwrng detection (OS-specific).
     // Implemented only for x86_64 Linux here, using raw syscalls (no libc, no std).
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    {
-        match linux_hwrng::detect_from_sysfs() {
-            | Ok(Some(t)) => return Some(t),
-            | Ok(None) => (),
-            | Err(_) => return Some(RngType::Unknown),
-        }
-    }
-
-    None
+    return linux_hwrng::detect_from_sysfs();
 }
 
 #[cfg(target_os = "macos")]
@@ -383,10 +376,10 @@ mod linux_hwrng {
         static mut BUF: [u8; 256] = [0u8; 256];
 
         let fd = sys_open_readonly(path_cstr)?;
-        let n = sys_read(fd, unsafe { &mut BUF })?;
+        let n = sys_read(fd, unsafe { &mut BUF })? as usize;
         let _ = sys_close(fd);
 
-        let trimmed = trim_ascii_whitespace(BUF.get(..n).unwrap_or(BUF));
+        let trimmed = trim_ascii_whitespace(BUF.get(..n).unwrap_or(&BUF));
         // Return as static lifetime because BUF is static. Caller must treat it as ephemeral.
         Ok(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(trimmed) })
     }
@@ -429,19 +422,20 @@ mod linux_hwrng {
 
     fn sys_open_readonly(path_cstr: &[u8]) -> Result<isize> {
         // path_cstr must be NUL-terminated.
-        if path_cstr.is_empty() || *path_cstr.last().is_none() {
+        if path_cstr.is_empty() || path_cstr.last().is_none() {
             return Err(DetectError::ParseError);
         }
-        let fd = syscall4(SYS_OPENAT, AT_FDCWD, path_cstr.as_ptr(), (O_RDONLY | O_CLOEXEC), 0);
+        let fd =
+            syscall4(SYS_OPENAT, AT_FDCWD, path_cstr.as_ptr() as isize, O_RDONLY | O_CLOEXEC, 0);
         errno_result(fd)
     }
 
-    fn sys_read(fd: usize, buf: &mut [u8]) -> Result<isize> {
-        let n = syscall3(SYS_READ, fd, buf.as_mut_ptr(), buf.len());
+    fn sys_read(fd: isize, buf: &mut [u8]) -> Result<isize> {
+        let n = syscall3(SYS_READ, fd, buf.as_mut_ptr() as isize, buf.len().min(isize::MAX as usize) as isize);
         errno_result(n)
     }
 
-    fn sys_close(fd: usize) -> Result<()> {
+    fn sys_close(fd: isize) -> Result<()> {
         let r = syscall1(SYS_CLOSE, fd);
         errno_result(r).map(|_| ())
     }
@@ -478,7 +472,7 @@ mod linux_hwrng {
         unsafe {
             core::arch::asm!(
             "syscall",
-            inlateout("rax") => ret,
+            inlateout("rax") n => ret,
             in("rdi") a1,
             in("rsi") a2,
             in("rdx") a3,
@@ -496,7 +490,7 @@ mod linux_hwrng {
         unsafe {
             core::arch::asm!(
             "syscall",
-            inlateout("rax") => ret,
+            inlateout("rax") n => ret,
             in("rdi") a1,
             in("rsi") a2,
             in("rdx") a3,
