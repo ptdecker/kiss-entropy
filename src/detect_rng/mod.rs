@@ -199,7 +199,10 @@ mod x86_cpuid {
 #[cfg(target_os = "macos")]
 mod macos_rng {
     use super::RngType;
-    use core::ffi::{c_char, c_int, c_void};
+    use core::{
+        ffi::{c_char, c_int, c_void},
+        mem::size_of,
+    };
 
     // sysctlbyname signature (from <sys/sysctl.h>):
     // int sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
@@ -242,11 +245,6 @@ mod macos_rng {
 
     #[inline]
     fn sysctl_u32_eq_1(name_cstr: &[u8]) -> bool {
-        use core::{
-            ffi::{c_char, c_void},
-            mem::size_of,
-        };
-
         // Require NUL-terminated; avoid unwrap to satisfy clippy::unwrap_used.
         match name_cstr.last() {
             | Some(&0) => {}
@@ -256,13 +254,10 @@ mod macos_rng {
         let mut value: u32 = 0;
         let mut len: usize = size_of::<u32>();
 
-        // Use from_mut to produce *mut T without `as`, then cast to *mut c_void.
-        let oldp: *mut c_void = core::ptr::from_mut(&mut value).cast::<c_void>();
-
         let rc = unsafe {
             sysctlbyname(
                 name_cstr.as_ptr().cast::<c_char>(),
-                oldp,
+                core::ptr::from_mut(&mut value).cast::<c_void>(),
                 &raw mut len,
                 core::ptr::null_mut(),
                 0,
@@ -279,9 +274,9 @@ mod linux_hwrng {
 
     use core::{fmt, ptr, slice};
 
-    /// Errors that may occur during RNG detection.
+    /// Errors that may occur during RNG detection
     ///
-    /// This module is intended to be `no_std`, so we keep the error surface small and allocation-free.
+    /// This module is intended to be `no_std` keeping the error surface small and allocation-free.
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub enum DetectError {
         /// OS call failed (platform-specific errno is provided when available).
@@ -308,27 +303,20 @@ mod linux_hwrng {
         }
     }
 
-    /// Convenience alias used throughout this module.
+    /// Convenience alias used throughout this module
     pub type Result<T> = core::result::Result<T, DetectError>;
 
     // Paths used by the Linux hwrng framework:
     // - /sys/devices/virtual/misc/hw_random/rng_current
     // - /sys/devices/virtual/misc/hw_random/rng_available
     // We prefer rng_current because it indicates the driver currently selected.
-
     const RNG_CURRENT: &[u8] = b"/sys/devices/virtual/misc/hw_random/rng_current\0";
     const RNG_AVAILABLE: &[u8] = b"/sys/devices/virtual/misc/hw_random/rng_available\0";
 
     pub fn detect_from_sysfs() -> Option<RngType> {
         // If rng_current exists and is readable, parse it.
         if let Ok(s) = read_small_cstr_file(RNG_CURRENT) {
-            if let Some(t) = map_driver_name(s) {
-                return Some(t);
-            }
-            // If it exists but doesn't match known names, it's still evidence of hwrng presence.
-            if !s.is_empty() {
-                return Some(RngType::LinuxHwrngCurrentDriver);
-            }
+            return Some(map_driver_name(s));
         }
 
         // Fall back to rng_available: if it lists anything, treat as hardware RNG present.
@@ -336,30 +324,24 @@ mod linux_hwrng {
             if s.is_empty() {
                 return None::<RngType>;
             }
-            // If it mentions a known driver, return it; otherwise Unknown.
-            if let Some(t) = map_driver_name(s) {
-                return Some(t);
-            }
-            return Some(RngType::Unknown);
+            return Some(map_driver_name(s));
         }
 
         None
     }
 
-    fn map_driver_name(s: &[u8]) -> Option<RngType> {
+    fn map_driver_name(s: &[u8]) -> RngType {
         // sysfs usually returns something like:
         // - "virtio_rng.0\n"
         // - "tpm-rng\n"
         // - other driver identifiers
         //
         // We do simple substring checks, case-sensitive.
-        if contains_subslice(s, b"virtio") {
-            return Some(RngType::VirtioRng);
+        match () {
+            | () if contains_subslice(s, b"virtio") => RngType::VirtioRng,
+            | () if contains_subslice(s, b"tpm") => RngType::TpmRng,
+            | () => RngType::Unknown,
         }
-        if contains_subslice(s, b"tpm") {
-            return Some(RngType::TpmRng);
-        }
-        None
     }
 
     fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
@@ -369,25 +351,25 @@ mod linux_hwrng {
         haystack.windows(needle.len()).any(|w| w == needle)
     }
 
-    /// Read a small sysfs file into a fixed buffer, trim trailing whitespace/newlines,
-    /// and return the bytes slice (no allocation).
+    /// Read a small sysfs file into a fixed buffer, trim trailing whitespace or newlines, and
+    /// return the bytes slice (no allocation).
     fn read_small_cstr_file(path_cstr: &[u8]) -> Result<&'static [u8]> {
+        const BUF_LEN: usize = 256;
         static mut BUF: [u8; 256] = [0u8; 256];
-
-        let fd = sys_open_readonly(path_cstr)?;
 
         // Get a raw pointer to the buffer without creating any references.
         let buf_ptr: *mut u8 = ptr::addr_of_mut!(BUF).cast::<u8>();
-        let buf_len: usize = 256;
 
-        let n_isize = sys_read_raw(fd, buf_ptr, buf_len)?;
-        let n: usize = n_isize.try_into()?;
+        let fd = sys_open_readonly(path_cstr)?;
+        let n: usize = sys_read_raw(fd, buf_ptr, BUF_LEN)?.try_into()?;
         let _ = sys_close(fd);
 
         let trimmed: &[u8] = unsafe {
-            let full = slice::from_raw_parts(buf_ptr.cast_const(), buf_len);
-            let slice = full.get(..n).ok_or(DetectError::InvalidLength)?;
-            trim_ascii_whitespace(slice)
+            trim_ascii_whitespace(
+                slice::from_raw_parts(buf_ptr.cast_const(), BUF_LEN)
+                    .get(..n)
+                    .ok_or(DetectError::InvalidLength)?,
+            )
         };
 
         Ok(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(trimmed) })
@@ -414,55 +396,183 @@ mod linux_hwrng {
         matches!(b, b' ' | b'\n' | b'\r' | b'\t')
     }
 
-    // ---------------------------
-    // Raw syscall wrappers (x86_64)
-    // ---------------------------
+    // -------------------------------
+    // Raw syscall wrappers (`x86_64`)
+    // -------------------------------
 
-    // x86_64 Linux syscall numbers:
+    // `x86_64` Linux syscall numbers:
     const SYS_READ: isize = 0;
     const SYS_CLOSE: isize = 3;
     const SYS_OPENAT: isize = 257;
 
+    /// Special value for `*at()` syscalls indicating that the pathname should be resolved relative
+    /// to the process’s current working directory. When used as the `dirfd` argument (e.g., with
+    /// `openat`), this causes the syscall to behave as if the non-`*at()` variant were used.
     const AT_FDCWD: isize = -100;
 
     // openat flags
     const O_RDONLY: isize = 0;
     const O_CLOEXEC: isize = 0o2_000_000;
 
+    /// Open a filesystem path for reading using `openat(2)`.
+    ///
+    /// This is a minimal wrapper around the `openat` syscall, always invoked with `AT_FDCWD` and
+    /// the flags `O_RDONLY | O_CLOEXEC`.
+    ///
+    /// # Parameters
+    ///
+    /// - `path_cstr`: A NUL-terminated path expressed as a byte slice. The slice **must** end in
+    ///   `\0`; no validation of interior NULs is performed.
+    ///
+    /// # Return value
+    ///
+    /// On success, returns a file descriptor (`>= 0`).
+    ///
+    /// On failure, returns a [`DetectError`] derived from the syscall errno.
+    ///
+    /// # Errors
+    ///
+    /// - [`DetectError::ParseError`] if `path_cstr` is empty
+    /// - [`DetectError::OsError`] if the syscall fails
+    ///
+    /// # Safety
+    ///
+    /// This function assumes:
+    ///
+    /// - `path_cstr` points to a valid, readable NUL-terminated string
+    /// - The path remains valid for the duration of the syscall
+    ///
+    /// Violating these assumptions may result in undefined behavior at the kernel boundary.
+    ///
+    /// # Platform
+    ///
+    /// Linux **`x86_64` only**
     fn sys_open_readonly(path_cstr: &[u8]) -> Result<isize> {
-        // path_cstr must be NUL-terminated.
         if path_cstr.is_empty() || path_cstr.last().is_none() {
             return Err(DetectError::ParseError);
         }
-        let fd =
-            syscall4(SYS_OPENAT, AT_FDCWD, path_cstr.as_ptr() as isize, O_RDONLY | O_CLOEXEC, 0);
-        errno_result(fd)
+        errno_result(syscall4(
+            SYS_OPENAT,
+            AT_FDCWD,
+            path_cstr.as_ptr() as isize,
+            O_RDONLY | O_CLOEXEC,
+            0,
+        ))
     }
 
+    /// Read bytes from a file descriptor into a raw buffer.
+    ///
+    /// This is a low-level wrapper around the `read(2)` syscall that operates on raw pointers
+    /// instead of Rust references. This avoids creating references to `static mut` buffers and is
+    /// compatible with Rust 2024 rules.
+    ///
+    /// # Parameters
+    ///
+    /// - `fd`: An open file descriptor
+    /// - `buf`: Destination buffer pointer
+    /// - `len`: Maximum number of bytes to read
+    ///
+    /// # Return value
+    ///
+    /// On success, returns the number of bytes read (`>= 0`).
+    ///
+    /// On failure, returns a [`DetectError`] derived from the syscall errno.
+    ///
+    /// # Safety
+    ///
+    /// The caller must guarantee:
+    ///
+    /// - `buf` is valid for writes of at least `len` bytes
+    /// - `buf` is properly aligned
+    /// - No aliasing violations occur while the syscall is in progress
+    ///
+    /// # Platform
+    ///
+    /// Linux **`x86_64` only**
     fn sys_read_raw(fd: isize, buf: *mut u8, len: usize) -> Result<isize> {
-        // Convert len to isize without panic; error out if it cannot fit.
-        let len_isize: isize = len.try_into()?;
-
-        let n = syscall3(SYS_READ, fd, buf as isize, len_isize);
-
-        errno_result(n)
+        errno_result(syscall3(SYS_READ, fd, buf as isize, len.try_into()?))
     }
 
+    /// Close a file descriptor.
+    ///
+    /// This is a thin wrapper around the `close(2)` syscall.
+    ///
+    /// # Parameters
+    ///
+    /// - `fd`: The file descriptor to close
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`DetectError::OsError`] if the syscall fails.
+    ///
+    /// # Platform
+    ///
+    /// Linux **`x86_64` only**
     fn sys_close(fd: isize) -> Result<()> {
-        let r = syscall1(SYS_CLOSE, fd);
-        errno_result(r).map(|_| ())
+        errno_result(syscall1(SYS_CLOSE, fd)).map(|_| ())
     }
 
+    /// Convert a raw syscall return value into a `Result`.
+    ///
+    /// Linux syscalls return:
+    ///
+    /// - `>= 0` on success
+    /// - `< 0` as `-errno` on failure
+    ///
+    /// This helper translates that convention into a Rust `Result`.
+    ///
+    /// # Parameters
+    ///
+    /// - `ret`: Raw syscall return value
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DetectError::OsError`] if `ret` is negative.
+    ///
+    /// # Notes
+    ///
+    /// This function does **not** perform any syscall itself; it purely interprets kernel return
+    /// values
     #[inline]
     fn errno_result(ret: isize) -> Result<isize> {
-        if ret < 0 {
-            // Linux syscalls return -errno.
-            Err(DetectError::OsError(i32::try_from(-ret)?))
-        } else {
-            Ok(ret)
-        }
+        if ret < 0 { Err(DetectError::OsError(i32::try_from(-ret)?)) } else { Ok(ret) }
     }
 
+    /// Perform a Linux `x86_64` system call with **one argument**.
+    ///
+    /// This is a thin, zero-overhead wrapper around the `syscall` instruction. It follows the
+    /// Linux `x86_64` syscall ABI:
+    ///
+    /// - `rax` — syscall number (input) / return value (output)
+    /// - `rdi` — first argument
+    /// - `rcx`, `r11` — clobbered by the instruction
+    ///
+    /// # Parameters
+    ///
+    /// - `n`: The syscall number (e.g., `SYS_read`, `SYS_close`)
+    /// - `a1`: First syscall argument
+    ///
+    /// # Return value
+    ///
+    /// Returns the raw syscall return value:
+    ///
+    /// - `>= 0` indicates success
+    /// - `< 0` is `-errno`
+    ///
+    /// Callers are responsible for translating negative return values into structured errors.
+    ///
+    /// # Safety
+    ///
+    /// This function is inherently `unsafe` in behavior, even though it is not marked `unsafe` at
+    /// the type level:
+    ///
+    /// - No validation is performed on the syscall number of arguments
+    /// - Incorrect arguments can cause undefined behavior at the kernel boundary
+    /// - The caller must uphold all syscall-specific invariants
+    ///
+    /// # Platform
+    ///
+    /// Linux **`x86_64` only**
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn syscall1(n: isize, a1: isize) -> isize {
@@ -480,6 +590,37 @@ mod linux_hwrng {
         ret
     }
 
+    /// Perform a Linux `x86_64` system call with **three arguments**.
+    ///
+    /// Register assignment follows the Linux `x86_64` syscall ABI:
+    ///
+    /// - `rax` — syscall number / return value
+    /// - `rdi` — argument 1
+    /// - `rsi` — argument 2
+    /// - `rdx` — argument 3
+    ///
+    /// # Parameters
+    ///
+    /// - `n`: The syscall number
+    /// - `a1`: First syscall argument
+    /// - `a2`: Second syscall argument
+    /// - `a3`: Third syscall argument
+    ///
+    /// # Return value
+    ///
+    /// Returns the raw syscall result:
+    ///
+    /// - `>= 0` indicates success
+    /// - `< 0` is `-errno`
+    ///
+    /// # Safety
+    ///
+    /// Same safety considerations as [`syscall1`]. This function performs no validation and
+    /// directly crosses the user to kernel boundary.
+    ///
+    /// # Platform
+    ///
+    /// Linux **`x86_64` only**
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn syscall3(n: isize, a1: isize, a2: isize, a3: isize) -> isize {
@@ -499,6 +640,42 @@ mod linux_hwrng {
         ret
     }
 
+    /// Perform a Linux `x86_64` system call with **four arguments**.
+    ///
+    /// Note that on `x86_64` Linux, the **fourth syscall argument must be passed in **`r10`**,
+    /// not `rcx`. This wrapper handles that correctly.
+    ///
+    /// Register assignment:
+    ///
+    /// - `rax` — syscall number / return value
+    /// - `rdi` — argument 1
+    /// - `rsi` — argument 2
+    /// - `rdx` — argument 3
+    /// - `r10` — argument 4
+    ///
+    /// # Parameters
+    ///
+    /// - `n`: The syscall number
+    /// - `a1`: First syscall argument
+    /// - `a2`: Second syscall argument
+    /// - `a3`: Third syscall argument
+    /// - `a4`: Fourth syscall argument
+    ///
+    /// # Return value
+    ///
+    /// Returns the raw syscall result:
+    ///
+    /// - `>= 0` indicates success
+    /// - `< 0` is `-errno`
+    ///
+    /// # Safety
+    ///
+    /// Same safety considerations as [`syscall1`]. Incorrect register usage, invalid pointers, or
+    /// malformed arguments can result in undefined behavior.
+    ///
+    /// # Platform
+    ///
+    /// Linux **`x86_64` only**
     #[allow(clippy::inline_always)]
     #[inline(always)]
     fn syscall4(n: isize, a1: isize, a2: isize, a3: isize, a4: isize) -> isize {
