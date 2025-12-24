@@ -443,12 +443,7 @@ mod linux_hwrng {
         // Convert len to isize without panic; error out if it cannot fit.
         let len_isize: isize = len.try_into()?;
 
-        let n = syscall3(
-            SYS_READ,
-            fd,
-            buf as isize,
-            len_isize,
-        );
+        let n = syscall3(SYS_READ, fd, buf as isize, len_isize);
 
         errno_result(n)
     }
