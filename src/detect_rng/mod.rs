@@ -146,7 +146,7 @@ pub fn detect_rng() -> Option<RngType> {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[must_use]
 pub fn detect_rng() -> Option<RngType> {
-    return Some(linux_hwrng::detect_from_sysfs());
+    return linux_hwrng::detect_from_sysfs();
 }
 
 #[cfg(target_os = "macos")]
