@@ -128,24 +128,24 @@ impl Display for RngType {
 ///
 /// Returns `Some(RngType)` when a hardware-backed RNG mechanism is detected, or `None` when no
 /// hardware-backed mechanism can be identified.
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(target_os = "linux", any(target_arch = "x86", target_arch = "x86_64")))]
 #[must_use]
 pub fn detect_rng() -> Option<RngType> {
     // 1) CPU instruction-based detection (works without OS access).
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    {
-        if x86_cpuid::has_rdseed() {
-            return Some(RngType::X86Rdseed);
-        }
-        if x86_cpuid::has_rdrand() {
-            return Some(RngType::X86Rdrand);
-        }
-        return None;
+    if x86_cpuid::has_rdseed() {
+        return Some(RngType::X86Rdseed);
     }
+    if x86_cpuid::has_rdrand() {
+        return Some(RngType::X86Rdrand);
+    }
+    None;
+}
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[must_use]
+pub fn detect_rng() -> Option<RngType> {
     // 2) Linux sysfs hwrng detection (OS-specific).
     // Implemented only for x86_64 Linux here, using raw syscalls (no libc, no std).
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     return linux_hwrng::detect_from_sysfs();
 }
 
@@ -379,7 +379,7 @@ mod linux_hwrng {
         let n = sys_read(fd, unsafe { &mut BUF })? as usize;
         let _ = sys_close(fd);
 
-        let trimmed = trim_ascii_whitespace(BUF.get(..n).unwrap_or(&BUF));
+        let trimmed = unsafe { trim_ascii_whitespace(BUF.get(..n).unwrap_or(&BUF)) };
         // Return as static lifetime because BUF is static. Caller must treat it as ephemeral.
         Ok(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(trimmed) })
     }
